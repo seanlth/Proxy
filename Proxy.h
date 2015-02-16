@@ -42,8 +42,8 @@ static long readTimeout(int fd, void* buffer, long size, int seconds, int millis
     // 1 more than the largest file descriptor in any of the sets
     if ( select(fd + 1, &read_fd, &write_fd, &except_fd, &timeout) == 1 )
     {
-        return recv(fd, buffer, size, 0);
-        //return read(fd, buffer, size);
+        //return recv(fd, buffer, size, 0);
+        return read(fd, buffer, size);
     }
     else
     {

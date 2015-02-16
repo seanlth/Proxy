@@ -1,0 +1,8 @@
+<header> --> <status><name-value-list>\r\n
+
+<status> --> <name>\s<value>\r\n
+<name-value> --> <name>:\s<value>\r\n
+
+<name-value-list> --> <name-value>:\s<name-value-list>
+<name-value-list> --> eps
+

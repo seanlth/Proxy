@@ -11,8 +11,7 @@
 
 Server::Server(int port)
 {
-    
-    this->threads = std::vector<std::thread>(1);
+    this->threads = std::vector<std::thread>(100);
     
     clean_up = false;
     
@@ -187,7 +186,7 @@ void Server::consoleInput()
         
         std::vector<std::string> command = partition(input, " ");
         
-        if (input.compare("__shutdown") == 0) {
+        if (input.compare("shutdown") == 0) {
             clean_up = true;
             close(socket_fd);
             this->connection_available.notify_all();
@@ -237,12 +236,6 @@ std::vector<std::string> Server::partition(std::string s, std::string delimiter)
     
     return result;
 }
-
-
-
-
-
-
 
 
 

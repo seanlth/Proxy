@@ -1,10 +1,3 @@
-//
-//  Connection.cpp
-//  Proxy
-//
-//  Created by Seán Hargadon on 01/02/2015.
-//  Copyright (c) 2015 Seán Hargadon. All rights reserved.
-//
 
 #include "Connection.h"
 #define BUFFER_SIZE 65536
@@ -15,7 +8,7 @@ Connection::Connection(int accept_fd)
 }
 
 
-void Connection::handleRequest(const std::vector<std::string> &banned_ips, const std::map<std::string, std::string> &cached_pages)
+void Connection::handleRequest(const std::vector<std::string> &banned_ips, std::map<std::string, std::string> &cached_pages)
 {
     //initialise array to 0
     char request_buffer[8192] = {0};
@@ -31,31 +24,218 @@ void Connection::handleRequest(const std::vector<std::string> &banned_ips, const
         return;
     }
     
-    std::cout << request_buffer << std::endl;
-    std::cout << strlen(request_buffer) << std::endl;
+    HeaderParser p = HeaderParser(request_buffer, strlen(request_buffer));
+    std::vector<std::pair<std::string, std::string>> n_v = p.parseHeader();
     
-    //std::string s = trimRequest(request_buffer);
+    bool noCache = false;
     
-    //std::string s = buffer;
+    for (std::pair<std::string, std::string> p : n_v) {
+        std::cout << p.first << " ";
+        std::cout << p.second << std::endl;
+        
+        if (p.first.compare("Cache-Control") == 0) {
+            noCache = true;
+            std::cout << "No cache" << std::endl;
+        }
+    }
     
-    //std::cout << s << std::endl;
-
-    
-    std::string host = getHostFromRequest(request_buffer);
-    std::cout << host << std::endl;
+    //get host
+    std::string host = n_v[1].second;
     
     if ( std::find(banned_ips.begin(), banned_ips.end(), host) != banned_ips.end() ) {
-        std::cout << "Banned address" << std::endl;
+        std::cout << "Address blacklisted" << std::endl;
         close(accept_fd);
         return;
     }
 
+    //get trimmed request, removes compression which doesn't work with caching
+    std::string trimmed_request = trimRequest(request_buffer);
     
-    //parse request from user
-    //Request r = parseRequest(buffer);
+    std::string file = n_v[0].second;
     
-    //std::cout << r.request_method << std::endl;
-    //std::cout << r.address << std::endl;
+    //modify name for saving 
+    std::replace( file.begin(), file.end(), '/', '_');
+
+    if ( cached_pages.find(file) == cached_pages.end() || noCache) {
+        cached_pages[file] = file;
+        manageConnection(host, (char*)trimmed_request.c_str(), file, request_not_cached);
+        std::cout << "Not cached" << std::endl;
+    }
+    else {
+        manageConnection(host, (char*)trimmed_request.c_str(), file, request_cached);
+        std::cout << "Cached" << std::endl;
+    }
+
+//    
+//    //parse request from user
+//    //Request r = parseRequest(buffer);
+//    
+//    //std::cout << r.request_method << std::endl;
+//    //std::cout << r.address << std::endl;
+//    
+//    //establish connection
+//    int request_fd = forwardRequest( (char*)host.c_str());
+//    
+//    if (request_fd == -1) {
+//        std::cout << "Failed to establish connection" << std::endl;
+//        this->log.push_back(Connection::error_connection_failed);
+//        return;
+//    }
+//    
+//    std::cout << "Connection established" << std::endl;
+//    
+//    //request method
+//    //std::string s = "GET / HTTP/1.1\r\nHost: " + r.address + "\r\n\r\n";
+//    
+//    
+//    //send request
+//    long success_send_request = send( request_fd, request_buffer, strlen(request_buffer), SO_NOSIGPIPE );
+//
+//    std::cout << "Send request" << std::endl;
+//
+//    
+//    if (success_send_request < 0) {
+//        close(accept_fd);
+//        this->log.push_back(Connection::error_request_failed);
+//        std::cout << "Failed to send request" << std::endl;
+//        return;
+//    }
+//    
+//    char buffer[BUFFER_SIZE] = {0};
+// 
+//    //request container
+//    std::string requestReturned = "";
+//    
+//    long n = 0;
+//    
+//    while( (n = readTimeout(request_fd, buffer, BUFFER_SIZE, 5, 0)) != 0 ) {
+//        success_read_write = send( accept_fd, buffer, n, SO_NOSIGPIPE );
+//        
+//        if (success_read_write < 0) {
+//            this->log.push_back(Connection::error_write_failed);
+//            std::cout << "Failed to send response to user" << std::endl;
+//            
+//            return;
+//        }
+//
+//        memset(buffer, 0, BUFFER_SIZE);
+//    }
+//    
+//    close(request_fd);
+//    
+//    std::cout << "Sending Response" << std::endl;
+//    
+//    //write request response back to user
+//    //success_read_write = write( accept_fd, requestReturned.c_str(), requestReturned.size() );
+//    
+//    std::cout << "Response Sent" << std::endl;
+//
+//    if (success_read_write < 0) {
+//        this->log.push_back(Connection::error_write_failed);
+//        std::cout << "Failed to send response to user" << std::endl;
+//
+//        return;
+//    }
+//    
+//    close(accept_fd);
+//    
+//    return;
+ 
+}
+
+void Connection::manageConnection(std::string host, char* request_buffer, std::string resource, RequestStatus status)
+{    
+    //establish connection
+    
+    if (status == request_cached) {
+        cachedRequest(resource);
+    }
+    else if (status == request_not_cached) {
+        nonCachedRequest(host, resource, request_buffer);
+    }
+}
+
+
+
+int Connection::request(char* host, RequestStatus status)
+{
+    int fd = 0;
+    
+    if (status == request_cached) {
+        
+    }
+    else if (status == request_not_cached) {
+        fd = forwardRequest(host);
+    }
+    return fd;
+}
+
+
+void Connection::cachedRequest(std::string address)
+{
+    long success_read_write = 0;
+    
+    std::string line;
+    
+    std::ifstream f("/Users/Seanlth/Documents/College Notes/Third Year/Telecoms/Proxy/cache/" + address, std::fstream::in | std::ios::binary);
+    if (f.is_open()) {
+        
+        char buffer[BUFFER_SIZE];
+        
+        while ( !f.eof() ) {
+            f.read (buffer, BUFFER_SIZE);
+            
+                success_read_write = send( accept_fd, buffer, strlen(buffer), SO_NOSIGPIPE );
+                if (success_read_write < 0) {
+                    this->log.push_back(Connection::error_write_failed);
+                    std::cout << "Failed to send response to user" << std::endl;
+                    
+                    return;
+                }
+        }
+        
+//        while ( std::getline (f, line) ) {
+//            
+//            line += "\r\n";
+//                        
+//            success_read_write = send( accept_fd, line.c_str(), line.length(), SO_NOSIGPIPE );
+//            
+//            if (success_read_write < 0) {
+//                this->log.push_back(Connection::error_write_failed);
+//                std::cout << "Failed to send response to user" << std::endl;
+//                
+//                return;
+//            }
+//        }
+    }
+    else {
+        std::cout << "Error reading cache" << std::endl;
+    }
+    f.close();
+    
+
+    std::cout << "Sending Response" << std::endl;
+
+    //write request response back to user
+    //success_read_write = write( accept_fd, requestReturned.c_str(), requestReturned.size() );
+
+    std::cout << "Response Sent" << std::endl;
+
+    if (success_read_write < 0) {
+        this->log.push_back(Connection::error_write_failed);
+        std::cout << "Failed to send response to user" << std::endl;
+        
+        return;
+    }
+
+    close(accept_fd);
+
+    return;
+}
+
+void Connection::nonCachedRequest(std::string host, std::string resource, char* request_buffer)
+{
+    long success_read_write = 0;
     
     //establish connection
     int request_fd = forwardRequest( (char*)host.c_str());
@@ -68,14 +248,10 @@ void Connection::handleRequest(const std::vector<std::string> &banned_ips, const
     
     std::cout << "Connection established" << std::endl;
     
-    //request method
-    //std::string s = "GET / HTTP/1.1\r\nHost: " + r.address + "\r\n\r\n";
-    
     //send request
     long success_send_request = send( request_fd, request_buffer, strlen(request_buffer), SO_NOSIGPIPE );
     
     std::cout << "Send request" << std::endl;
-
     
     if (success_send_request < 0) {
         close(accept_fd);
@@ -85,14 +261,49 @@ void Connection::handleRequest(const std::vector<std::string> &banned_ips, const
     }
     
     char buffer[BUFFER_SIZE] = {0};
- 
+    
     //request container
     std::string requestReturned = "";
     
     long n = 0;
     
-    while( (n = readTimeout(request_fd, buffer, BUFFER_SIZE, 5, 0)) != 0 ) {
+    std::ofstream f;
+    
+    std::string file = resource;
+    
+    
+    file = "/Users/Seanlth/Documents/College Notes/Third Year/Telecoms/Proxy/cache/" + file;
+    
+    FILE * pFile;
+    pFile = std::fopen (file.c_str(), "wb");
+    if (!pFile) {return;}
+    
+    
+//    f.open("/Users/Seanlth/Documents/College Notes/Third Year/Telecoms/Proxy/cache/" + file);
+//    if ( f.is_open() ) {
+//        
+//    }
+//    else {
+//        std::cout << "Failed to open" << std::endl;
+//    }
+    
+    
+    while( (n = readTimeout(request_fd, buffer, BUFFER_SIZE, 6, 0)) != 0 ) {
+        
+        if (n == -1) {
+            std::cout << "!!!! ERROR !!!!" << std::endl;
+            printf("%s\n", strerror(errno) );
+            std::cout << "!!!! ERROR !!!!" << std::endl;
+            return;
+        }
+        
         success_read_write = send( accept_fd, buffer, n, SO_NOSIGPIPE );
+        
+        std::fwrite (buffer , sizeof(char), n, pFile);
+
+        //std::string b = buffer;
+        
+        //f << buffer;
         
         if (success_read_write < 0) {
             this->log.push_back(Connection::error_write_failed);
@@ -100,11 +311,15 @@ void Connection::handleRequest(const std::vector<std::string> &banned_ips, const
             
             return;
         }
-
+        
         memset(buffer, 0, BUFFER_SIZE);
     }
-    
+    //f.close();
+    std::fclose (pFile);
+
     close(request_fd);
+    
+    
     
     std::cout << "Sending Response" << std::endl;
     
@@ -112,11 +327,11 @@ void Connection::handleRequest(const std::vector<std::string> &banned_ips, const
     //success_read_write = write( accept_fd, requestReturned.c_str(), requestReturned.size() );
     
     std::cout << "Response Sent" << std::endl;
-
+    
     if (success_read_write < 0) {
         this->log.push_back(Connection::error_write_failed);
         std::cout << "Failed to send response to user" << std::endl;
-
+        
         return;
     }
     
